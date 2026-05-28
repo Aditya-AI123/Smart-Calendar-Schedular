@@ -20,11 +20,11 @@ from zoneinfo import ZoneInfo
 from groq import Groq, RateLimitError
 from google.oauth2.credentials import Credentials
 
-from calendar_tool import (
+from backend.calendar_tool import (
     get_availability, check_slot, book_slot, find_next_slot,
     get_events_for_day, search_event, find_slot_in_range,
 )
-from intent import extract_intent
+from backend.intent import extract_intent
 
 log = logging.getLogger("agent")
 
