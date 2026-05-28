@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Scheduler</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── Auth gate ─────────────────────────────────── */
+    #auth-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+      background: #fff;
+      border-radius: 20px;
+      padding: 56px 48px;
+      box-shadow: 0 4px 32px rgba(0,0,0,.08);
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+    }
+    #auth-screen h1 { font-size: 1.6rem; color: #1d1d1f; }
+    #auth-screen p  { font-size: .95rem; color: #6e6e73; line-height: 1.5; }
+
+    .btn-google {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: #fff;
+      border: 1.5px solid #dadce0;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 1rem;
+      font-weight: 500;
+      color: #3c4043;
+      cursor: pointer;
+      text-decoration: none;
+      transition: box-shadow .15s, border-color .15s;
+    }
+    .btn-google:hover {
+      box-shadow: 0 2px 8px rgba(0,0,0,.12);
+      border-color: #bbb;
+    }
+    .btn-google svg { flex-shrink: 0; }
+
+    /* ── Main app ────────────────────────────────── */
+    #app-screen {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+      background: #fff;
+      border-radius: 20px;
+      padding: 36px 40px;
+      box-shadow: 0 4px 32px rgba(0,0,0,.08);
+      max-width: 600px;
+      width: 90%;
+    }
+    #app-screen h1 { font-size: 1.4rem; color: #1d1d1f; text-align: center; }
+
+    /* Chat transcript */
+    #transcript {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 340px;
+      overflow-y: auto;
+      padding: 12px;
+      background: #f5f5f7;
+      border-radius: 12px;
+      min-height: 80px;
+    }
+    .bubble {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 16px;
+      font-size: .93rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      background: #0071e3;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.agent {
+      align-self: flex-start;
+      background: #e5e5ea;
+      color: #1d1d1f;
+      border-bottom-left-radius: 4px;
+    }
+    .bubble.thinking {
+      align-self: flex-start;
+      background: #e5e5ea;
+      color: #888;
+      font-style: italic;
+      border-bottom-left-radius: 4px;
+    }
+
+    /* Input row */
+    #input-row {
+      display: flex;
+      gap: 8px;
+    }
+    #msg-input {
+      flex: 1;
+      border: 1.5px solid #dadce0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: .95rem;
+      outline: none;
+      transition: border-color .15s;
+    }
+    #msg-input:focus { border-color: #0071e3; }
+
+    .btn-send {
+      background: #0071e3;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-size: .95rem;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-send:hover { background: #0058b0; }
+    .btn-send:disabled { background: #aaa; cursor: not-allowed; }
+
+    .btn-mic {
+      background: #f5f5f7;
+      border: 1.5px solid #dadce0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background .15s, border-color .15s, box-shadow .15s;
+      flex-shrink: 0;
+    }
+    .btn-mic:hover { background: #e8e8ed; border-color: #bbb; }
+    .btn-mic.blocked  { background: #fff3f3; border-color: #ff3b30; color: #ff3b30; }
+    .btn-mic.paused   { background: #e3f0ff; border-color: #0071e3; color: #0071e3; }
+    /* active = VAD running, waiting for speech */
+    .btn-mic.active   { background: #e8f9ef; border-color: #30d158; color: #1a7a3a; }
+    /* speaking = speech currently detected */
+    .btn-mic.speaking { background: #ff3b30; border-color: #ff3b30; color: #fff;
+                        animation: mic-pulse .7s ease-in-out infinite; }
+    .btn-mic:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Voice row (standalone mic section) ─────── */
+    #voice-row {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0 8px;
+    }
+    #voice-row .btn-mic {
+      padding: 12px 36px;
+      border-radius: 28px;
+      font-size: .98rem;
+      font-weight: 500;
+      min-width: 150px;
+    }
+
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,.5); }
+      50%       { box-shadow: 0 0 0 9px rgba(255,59,48,0); }
+    }
+
+    #mic-status {
+      font-size: .82rem;
+      min-height: 1.3em;
+      color: #6e6e73;
+      text-align: center;
+      padding: 4px 4px;
+      letter-spacing: .01em;
+      transition: color .2s;
+    }
+    #mic-status.active   { color: #1a7a3a; font-weight: 500; }
+    #mic-status.speaking { color: #ff3b30; font-weight: 600; }
+    #mic-status.error    { color: #ff3b30; }
+
+    .btn-logout {
+      align-self: flex-end;
+      background: none;
+      border: 1.5px solid #dadce0;
+      border-radius: 8px;
+      padding: 6px 16px;
+      font-size: .85rem;
+      color: #6e6e73;
+      cursor: pointer;
+      transition: border-color .15s;
+    }
+    .btn-new-convo {
+      background: none;
+      border: 1.5px solid #dadce0;
+      border-radius: 8px;
+      padding: 6px 16px;
+      font-size: .85rem;
+      color: #6e6e73;
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .btn-new-convo:hover { border-color: #0071e3; color: #0071e3; }
+    /* ── Voice UI (production only) ─────────────── */
+    #voice-ui {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0 4px;
+      color: #6e6e73;
+      font-size: .9rem;
+    }
+
+    /* ── Dev timing panel ────────────────────────── */
+    #timing-panel {
+      display: none;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: .75rem;
+      background: #1c1c1e;
+      color: #e5e5ea;
+      border-radius: 10px;
+      padding: 10px 14px;
+      line-height: 1.7;
+    }
+    #timing-panel .tp-header {
+      font-weight: 600;
+      color: #ffd60a;
+      margin-bottom: 4px;
+      letter-spacing: .04em;
+    }
+    #timing-panel .tp-row { display: flex; justify-content: space-between; gap: 20px; }
+    #timing-panel .tp-label { color: #98989d; }
+    #timing-panel .tp-val  { color: #30d158; font-weight: 600; }
+    #timing-panel .tp-sub  { color: #636366; padding-left: 10px; }
+    #timing-panel .tp-total { color: #ff9f0a; font-weight: 700; border-top: 1px solid #3a3a3c; margin-top: 4px; padding-top: 4px; }
+  </style>
+</head>
+<body>
+
+  <!-- Shown when not authenticated -->
+  <div id="auth-screen">
+    <h1>Smart Scheduler</h1>
+    <p>Your voice-enabled AI scheduling assistant.<br>Connect your Google Calendar to get started.</p>
+    <a class="btn-google" href="/auth/login">
+      <!-- Google G logo -->
+      <svg width="20" height="20" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#EA4335" d="M24 9.5c3.14 0 5.95 1.08 8.17 2.84l6.1-6.1C34.46 3.09 29.5 1 24 1 14.82 1 7.07 6.48 3.6 14.27l7.1 5.52C12.45 13.27 17.76 9.5 24 9.5z"/>
+        <path fill="#4285F4" d="M46.5 24.5c0-1.64-.15-3.22-.43-4.75H24v9h12.65c-.55 2.96-2.2 5.46-4.7 7.14l7.27 5.65C43.44 37.5 46.5 31.45 46.5 24.5z"/>
+        <path fill="#FBBC05" d="M10.7 28.21A14.57 14.57 0 0 1 9.5 24c0-1.47.25-2.9.7-4.21L3.1 14.27A23.93 23.93 0 0 0 .5 24c0 3.87.93 7.53 2.6 10.73l7.6-6.52z"/>
+        <path fill="#34A853" d="M24 47c6.48 0 11.93-2.14 15.9-5.82l-7.27-5.65c-2.14 1.45-4.88 2.3-8.63 2.3-6.24 0-11.55-3.77-13.3-9.29l-7.6 6.52C7.07 41.52 14.82 47 24 47z"/>
+      </svg>
+      Login with Google Calendar
+    </a>
+  </div>
+
+  <!-- Shown after successful OAuth -->
+  <div id="app-screen">
+    <h1>Smart Scheduler</h1>
+
+    <div id="transcript">
+      <div class="bubble agent">Hi! I'm your Smart Scheduler. Tell me when you'd like to meet and I'll check your calendar.</div>
+    </div>
+
+    <div id="voice-row">
+      <button class="btn-mic" id="mic-btn" onclick="toggleVad()" title="Start voice input">🎤 Start</button>
+      <div id="mic-status">Click 🎤 Start to enable voice input</div>
+    </div>
+
+    <div id="input-row">
+      <input id="msg-input" type="text" placeholder="e.g. Schedule a 30 min meeting tomorrow afternoon…" autocomplete="off" />
+      <button class="btn-send" id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+
+    <button class="btn-logout" onclick="logout()">Disconnect Calendar</button>
+    <button class="btn-new-convo" onclick="newConversation()" title="Clear chat and start fresh">&#8635; New Conversation</button>
+
+    <!-- Dev-mode timing panel — rendered by showTiming() -->
+    <div id="timing-panel"></div>
+  </div>
+
+  <script>
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    let appMode = 'development'; // set by /config on load
+
+    // ── Dev timing state ───────────────────────────────────────────────────
+    var _micStoppedAt = null;   // Date.now() when recording stopped
+    var _sttMs = null;
+    var _chatTiming = null;     // full timing object from /chat
+    var _ttsMs = null;
+
+    function _resetTiming() {
+      _micStoppedAt = null; _sttMs = null; _chatTiming = null; _ttsMs = null;
+    }
+
+    function showTiming({ sttMs, chatTiming, ttsMs, micToVoiceMs }) {
+      if (appMode !== 'development') return;
+      const panel = document.getElementById('timing-panel');
+      if (!panel) return;
+      panel.style.display = 'block';
+
+      // All measured durations for proportional bar scaling
+      const allMs = [
+        sttMs,
+        ...(chatTiming ? (chatTiming.groq_calls || []).map(g => g.ms) : []),
+        ...(chatTiming ? (chatTiming.tools      || []).map(t => t.ms) : []),
+        ttsMs,
+      ].filter(v => v != null);
+      const maxMs = Math.max(...allMs, 1);
+
+      const bar = ms =>
+        `<div style="margin-top:3px;height:3px;border-radius:2px;background:#30d158;width:${Math.round((ms/maxMs)*100)}%;opacity:.7"></div>`;
+
+      const row = (label, ms, sub) =>
+        `<div class="tp-row"><span class="tp-label">${label}</span><span class="tp-val">${ms} ms</span></div>` +
+        `${bar(ms)}` +
+        (sub ? `<div class="tp-sub">${sub}</div>` : '');
+
+      // Tool name → friendly label mapping
+      const toolLabel = name => ({
+        'check_slot':        'Google: check slot',
+        'book_slot':         'Google: book slot',
+        'get_availability':  'Google: get availability',
+        'find_next_slot':    'Google: find next slot',
+        'find_slot_in_range':'Google: find slot in range',
+        'get_events':        'Google: list events',
+        'search_event':      'Google: search event',
+        'search_event(anchor)': 'Google: search anchor',
+      }[name] || `Google: ${name}`);
+
+      let html = '<div class="tp-header">⏱ Request Timing</div>';
+
+      if (sttMs != null)
+        html += row('STT (Whisper)', sttMs);
+
+      if (chatTiming) {
+        const calls = chatTiming.groq_calls || [];
+        const tools = chatTiming.tools      || [];
+
+        // LLM rows — one per Groq call
+        for (const g of calls) {
+          const label = g.iter === 0 ? 'LLM: intent extract' : 'LLM: fallback reply';
+          html += row(label, g.ms);
+        }
+
+        // Calendar tool rows — each gets its own bar
+        for (const t of tools) {
+          html += row(toolLabel(t.name), t.ms);
+        }
+      }
+
+      if (ttsMs != null)
+        html += row('TTS first byte (Orpheus)', ttsMs);
+
+      if (micToVoiceMs != null)
+        html += `<div class="tp-row tp-total" style="margin-top:6px"><span>🎙 Mic stop → first audio</span><span>${micToVoiceMs} ms</span></div>`;
+
+      panel.innerHTML = html;
+
+      // Also log to console in a table
+      const rows = [];
+      if (sttMs != null) rows.push({ step: 'STT', ms: sttMs });
+      if (chatTiming) {
+        (chatTiming.groq_calls || []).forEach(g => rows.push({ step: `LLM iter${g.iter}`, ms: g.ms }));
+        (chatTiming.tools || []).forEach(t => rows.push({ step: `tool:${t.name}`, ms: t.ms }));
+        rows.push({ step: 'Agent total', ms: chatTiming.total_ms });
+      }
+      if (ttsMs != null) rows.push({ step: 'TTS', ms: ttsMs });
+      if (micToVoiceMs != null) rows.push({ step: '*** Mic→Voice ***', ms: micToVoiceMs });
+      console.table(rows);
+    }
+
+    async function checkAuth() {
+      try {
+        const [authRes, cfgRes] = await Promise.all([
+          fetch('/auth/status', { credentials: 'include' }),
+          fetch('/config'),
+        ]);
+        const { authenticated } = await authRes.json();
+        const { mode } = await cfgRes.json();
+        appMode = mode;
+
+        document.getElementById('auth-screen').style.display = authenticated ? 'none' : 'flex';
+        document.getElementById('app-screen').style.display  = authenticated ? 'flex' : 'none';
+
+        if (authenticated) {
+          applyMode(mode);
+        }
+      } catch {
+        document.getElementById('auth-screen').style.display = 'flex';
+      }
+    }
+
+    function applyMode(mode) {
+      document.getElementById('input-row').style.display    = 'flex';
+      document.getElementById('transcript').style.display   = 'flex';
+      setMicStatus('Click 🎤 Start to enable voice input');
+    }
+
+    async function logout() {
+      await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+      checkAuth();
+    }
+
+    async function newConversation() {
+      await fetch('/session/reset', { method: 'POST', credentials: 'include' });
+      const t = document.getElementById('transcript');
+      t.innerHTML = '<div class="bubble agent">Hi! I\'m your Smart Scheduler. Tell me when you\'d like to meet and I\'ll check your calendar.</div>';
+      _resetTiming();
+      const panel = document.getElementById('timing-panel');
+      if (panel) panel.style.display = 'none';
+      document.getElementById('msg-input').value = '';
+    }
+
+    function addBubble(role, text) {
+      const t = document.getElementById('transcript');
+      const div = document.createElement('div');
+      div.className = `bubble ${role}`;
+      if (role === 'agent') {
+        // Render **bold** safely: escape HTML first, then apply bold
+        const esc = text
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        div.innerHTML = esc.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      } else {
+        div.textContent = text;
+      }
+      t.appendChild(div);
+      t.scrollTop = t.scrollHeight;
+      return div;
+    }
+
+    // Update an existing agent bubble in-place (used while streaming tokens)
+    function _updateBubble(div, text) {
+      const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      div.innerHTML = esc.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      const t = document.getElementById('transcript');
+      t.scrollTop = t.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('msg-input');
+      const btn   = document.getElementById('send-btn');
+      const text  = input.value.trim();
+      if (!text) return;
+
+      input.value = '';
+      btn.disabled = true;
+      addBubble('user', text);
+      const thinking = addBubble('thinking', 'Thinking…');
+
+      if (_micStoppedAt === null) _resetTiming();
+      const panel = document.getElementById('timing-panel');
+      if (panel) panel.style.display = 'none';
+
+      let agentBubble = null;
+      let fullReply = '';
+      let gotDone = false;
+
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ message: text, timezone: tz }),
+        });
+
+        // Non-2xx means an error JSON was returned (auth, rate-limit, etc.)
+        if (!res.ok) {
+          const data = await res.json();
+          thinking.remove();
+          addBubble('agent', data.error || 'Something went wrong.');
+          return;
+        }
+
+        // Consume the SSE stream.
+        // Event shapes (JSON after "data: "):
+        //   {"token": "…"}                           – streaming token (fallback LLM only)
+        //   {"reply": "…", "done": true, "timing": {…}} – final event (all paths)
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+
+          // SSE events are delimited by \n\n
+          const blocks = sseBuffer.split('\n\n');
+          sseBuffer = blocks.pop(); // keep any incomplete trailing block
+
+          for (const block of blocks) {
+            const line = block.trim();
+            if (!line.startsWith('data: ')) continue;
+            let evt;
+            try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+            if (evt.token) {
+              // First token: swap thinking bubble for a real agent bubble
+              if (!agentBubble) {
+                thinking.remove();
+                agentBubble = addBubble('agent', '');
+              }
+              fullReply += evt.token;
+              _updateBubble(agentBubble, fullReply);
+            }
+
+            if (evt.done) {
+              gotDone = true;
+              const replyText = evt.reply || fullReply;
+              if (!agentBubble) {
+                // Single-shot reply (route path) — no prior tokens
+                thinking.remove();
+                agentBubble = addBubble('agent', replyText);
+              } else if (evt.reply) {
+                // Use server’s canonical accumulated text in case of minor drift
+                fullReply = evt.reply;
+                _updateBubble(agentBubble, fullReply);
+              }
+              if (evt.timing) _chatTiming = evt.timing;
+              if (replyText) speakReply(replyText);
+              if (_micStoppedAt === null && appMode === 'development') {
+                showTiming({ sttMs: null, chatTiming: _chatTiming, ttsMs: null, micToVoiceMs: null });
+              }
+            }
+          }
+        }
+
+        // Stream closed without a done event — server error was caught and logged
+        if (!gotDone) {
+          if (thinking.parentNode) thinking.remove();
+          if (!agentBubble) addBubble('agent', 'Something went wrong — please try again.');
+        }
+      } catch (e) {
+        if (thinking.parentNode) thinking.remove();
+        if (!agentBubble) addBubble('agent', 'Network error — is the server running?');
+      } finally {
+        btn.disabled = false;
+        input.focus();
+      }
+    }
+
+    // ── Mic status helper (never uses chat bubbles) ────────────────────────
+    // cssClass: 'error' | 'active' | 'speaking' | true (= 'error') | falsy (plain)
+    function setMicStatus(msg, cssClass) {
+      const el = document.getElementById('mic-status');
+      el.textContent = msg;
+      el.className = cssClass === true ? 'error' : (cssClass || '');
+    }
+
+    // ── Voice ─────────────────────────────────────────────────────────────
+    // VAD lives in the module script below; toggleVad() is exposed via window.
+    async function handleAudioBlob(blob, filename) {
+      const btn = document.getElementById('mic-btn');
+      btn.disabled = true;
+      setMicStatus('Transcribing…');
+      try {
+        const form = new FormData();
+        form.append('audio', blob, filename);
+        const res = await fetch('/voice/transcribe', {
+          method: 'POST', credentials: 'include', body: form,
+        });
+        const data = await res.json();
+        setMicStatus('');
+        if (!res.ok) {
+          setMicStatus(`Transcription error: ${data.error || res.statusText}`, true);
+          return;
+        }
+        if (data.timing_ms != null) _sttMs = data.timing_ms;
+        if (data.text && data.text.trim()) {
+          document.getElementById('msg-input').value = data.text.trim();
+          sendMessage();
+        } else {
+          setMicStatus("Couldn't hear anything clearly — try again", true);
+        }
+      } catch (err) {
+        setMicStatus(`Transcription failed: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        // Restore active appearance if VAD is still running
+        if (window._vadInst && !document.getElementById('mic-btn').classList.contains('paused')) {
+          setMicStatus('🟢 Ready — speak anytime', 'active');
+        }
+      }
+    }
+
+    // ── WAV progressive-playback helpers ──────────────────────────────────
+    // The server streams raw PCM WAV (standard 44-byte header, PCM16 LE).
+    // We parse the header from the first chunk, then schedule each subsequent
+    // chunk of PCM samples onto the Web Audio timeline so playback starts as
+    // soon as the first real audio chunk arrives.
+
+    function _parseWavHeader(bytes) {
+      // bytes is Uint8Array of at least 44 bytes
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const marker = String.fromCharCode(bytes[36], bytes[37], bytes[38], bytes[39]);
+      if (marker !== 'data') return null; // non-standard layout; fall back
+      return {
+        numChannels:  view.getUint16(22, true),
+        sampleRate:   view.getUint32(24, true),
+        bitsPerSample: view.getUint16(34, true),
+      };
+    }
+
+    // Schedule pcmBytes on audioCtx starting at scheduleAt.
+    // Returns the duration (seconds) of this chunk so the caller can advance scheduleAt.
+    function _schedulePcmChunk(audioCtx, wavInfo, pcmBytes, scheduleAt) {
+      const { numChannels, sampleRate, bitsPerSample } = wavInfo;
+      const bytesPerSample = bitsPerSample / 8;
+      const numFrames = Math.floor(pcmBytes.length / (bytesPerSample * numChannels));
+      if (numFrames === 0) return 0;
+
+      const buffer = audioCtx.createBuffer(numChannels, numFrames, sampleRate);
+      const view = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+
+      for (let ch = 0; ch < numChannels; ch++) {
+        const channelData = buffer.getChannelData(ch);
+        for (let i = 0; i < numFrames; i++) {
+          const byteIdx = (i * numChannels + ch) * bytesPerSample;
+          channelData[i] = bitsPerSample === 16
+            ? view.getInt16(byteIdx, true) / 32768
+            : (view.getUint8(byteIdx) - 128) / 128;
+        }
+      }
+
+      const src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(audioCtx.destination);
+      // Never schedule in the past; add tiny safety margin
+      src.start(Math.max(scheduleAt, audioCtx.currentTime + 0.01));
+      return numFrames / sampleRate;
+    }
+
+    async function speakReply(text) {
+      try {
+        const t_sent = Date.now();
+        const res = await fetch('/voice/synthesize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) return; // best-effort; silently ignore API errors
+
+        const reader = res.body.getReader();
+        const audioCtx = getAudioCtx();
+
+        let headerAccum = new Uint8Array(0); // accumulate until we have 44 bytes
+        let wavInfo = null;
+        let scheduleAt = audioCtx.currentTime + 0.08; // 80 ms initial buffer
+        let firstByteReceived = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (!value || value.length === 0) continue;
+
+          if (!firstByteReceived) {
+            _ttsMs = Date.now() - t_sent; // time-to-first-byte
+            firstByteReceived = true;
+          }
+
+          if (!wavInfo) {
+            // Accumulate until we have the full 44-byte WAV header
+            const merged = new Uint8Array(headerAccum.length + value.length);
+            merged.set(headerAccum);
+            merged.set(value, headerAccum.length);
+            headerAccum = merged;
+
+            if (headerAccum.length >= 44) {
+              wavInfo = _parseWavHeader(headerAccum);
+              if (!wavInfo) {
+                // Non-standard WAV: collect everything and do a single decode
+                const chunks = [headerAccum];
+                while (true) {
+                  const { value: v, done: d } = await reader.read();
+                  if (d) break;
+                  if (v && v.length) chunks.push(v);
+                }
+                const total = chunks.reduce((s, c) => s + c.length, 0);
+                const full = new Uint8Array(total);
+                let off = 0;
+                for (const c of chunks) { full.set(c, off); off += c.length; }
+                const decoded = await audioCtx.decodeAudioData(full.buffer);
+                const src = audioCtx.createBufferSource();
+                src.buffer = decoded;
+                src.connect(audioCtx.destination);
+                src.start();
+                break;
+              }
+              // Schedule any PCM data that arrived after the header in this same chunk
+              const pcmChunk = headerAccum.subarray(44);
+              if (pcmChunk.length > 0) {
+                scheduleAt += _schedulePcmChunk(audioCtx, wavInfo, pcmChunk, scheduleAt);
+              }
+              headerAccum = null;
+            }
+          } else {
+            // Full PCM chunk — schedule immediately
+            scheduleAt += _schedulePcmChunk(audioCtx, wavInfo, value, scheduleAt);
+          }
+        }
+
+        const micToVoiceMs = _micStoppedAt ? Date.now() - _micStoppedAt : null;
+        if (appMode === 'development') {
+          showTiming({ sttMs: _sttMs, chatTiming: _chatTiming, ttsMs: _ttsMs, micToVoiceMs });
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // Allow Enter key to send
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('msg-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) sendMessage();
+      });
+      checkAuth();
+    });
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
+  <script>
+    // Pin to wasm-only execution provider BEFORE vad-web loads.
+    // Without this ORT tries the WebGPU/JSEP backend which dynamically imports
+    // ort-wasm-simd-threaded.jsep.mjs — that fetch fails without COOP/COEP headers.
+    ort.env.wasm.numThreads = 1;
+    ort.env.logLevel = 'error';   // suppress [W] initializer pruning noise
+    const _ortCreate = ort.InferenceSession.create.bind(ort.InferenceSession);
+    ort.InferenceSession.create = (model, opts) =>
+      _ortCreate(model, { ...(opts || {}), executionProviders: ['wasm'] });
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/bundle.min.js"></script>
+  <script>
+    function float32ToWav(float32Array, sampleRate) {
+      const numSamples = float32Array.length;
+      const buf = new ArrayBuffer(44 + numSamples * 2);
+      const view = new DataView(buf);
+      const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + numSamples * 2, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);           // subchunk1 size
+      view.setUint16(20, 1, true);            // PCM format
+      view.setUint16(22, 1, true);            // mono
+      view.setUint32(24, sampleRate, true);   // sample rate
+      view.setUint32(28, sampleRate * 2, true); // byte rate
+      view.setUint16(32, 2, true);            // block align
+      view.setUint16(34, 16, true);           // bits per sample
+      writeStr(36, 'data');
+      view.setUint32(40, numSamples * 2, true);
+      let off = 44;
+      for (let i = 0; i < numSamples; i++) {
+        const s = Math.max(-1, Math.min(1, float32Array[i]));
+        view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        off += 2;
+      }
+      return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    // Warm up AudioContext on first user gesture so TTS playback is never blocked
+    window._audioCtx = null;
+    function getAudioCtx() {
+      if (!window._audioCtx || window._audioCtx.state === 'closed') {
+        window._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (window._audioCtx.state === 'suspended') window._audioCtx.resume();
+      return window._audioCtx;
+    }
+    window.getAudioCtx = getAudioCtx;
+
+    window.initVAD = async function () {
+      const btn = document.getElementById('mic-btn');
+      btn.disabled = true;
+      window.setMicStatus('Starting mic…');
+      try {
+        // Warm up AudioContext now (we have a user gesture)
+        getAudioCtx();
+        window._vadInst = await vad.MicVAD.new({
+          positiveSpeechThreshold: 0.6,
+          negativeSpeechThreshold: 0.35,
+          minSpeechFrames: 4,
+          onSpeechStart() {
+            window._micStoppedAt = null;
+            const b = document.getElementById('mic-btn');
+            b.classList.remove('active');
+            b.classList.add('speaking');
+            b.textContent = '🔴 Hearing…';
+            window.setMicStatus('🔴 Got you — listening…', 'speaking');
+          },
+          async onSpeechEnd(float32Array) {
+            window._micStoppedAt = Date.now();
+            const b = document.getElementById('mic-btn');
+            b.classList.remove('speaking');
+            b.classList.add('active');
+            b.textContent = '⏸ Pause';
+            const blob = float32ToWav(float32Array, 16000);
+            await window.handleAudioBlob(blob, 'audio.wav');
+          },
+        });
+        window._vadInst.start();
+        btn.classList.add('active');
+        btn.textContent = '⏸ Pause';
+        btn.title = 'Pause listening';
+        window.setMicStatus('🟢 Ready — speak anytime', 'active');
+      } catch (err) {
+        window.setMicStatus(`Mic failed: ${err.message}`, 'error');
+        btn.classList.add('blocked');
+        btn.textContent = '🎤 Start';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    window.toggleVad = function () {
+      // First click — VAD not yet created, initialise it
+      if (!window._vadInst) { window.initVAD(); return; }
+      const btn = document.getElementById('mic-btn');
+      if (btn.classList.contains('paused')) {
+        // Resume
+        window._vadInst.start();
+        btn.classList.remove('paused');
+        btn.classList.add('active');
+        btn.textContent = '⏸ Pause';
+        btn.title = 'Pause listening';
+        window.setMicStatus('🟢 Ready — speak anytime', 'active');
+      } else if (!btn.classList.contains('blocked')) {
+        // Pause
+        window._vadInst.pause();
+        btn.classList.remove('active', 'speaking');
+        btn.classList.add('paused');
+        btn.textContent = '▶ Resume';
+        btn.title = 'Resume listening';
+        window.setMicStatus('Mic paused — click Resume to listen again');
+      }
+    };
+  </script>
+</body>
+</html>
+
