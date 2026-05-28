@@ -37,7 +37,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # ── Logging ────────────────────────────────────────────────────────────────────
 _is_dev = os.getenv("ENVIRONMENT", "development") == "development"
 logging.basicConfig(
-    level=logging.DEBUG if _is_dev else logging.WARNING,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -199,6 +199,14 @@ async def auth_login(ss_session: str = Cookie(default=None)):
     )
     _oauth_states[state] = session_id
 
+    log.info(
+        "[auth/login] session_id=%s... state=%s... env=%s secure=%s",
+        session_id[:8],
+        state[:8],
+        os.getenv("ENVIRONMENT", "development"),
+        os.getenv("ENVIRONMENT", "development") == "production",
+    )
+
     response = RedirectResponse(auth_url)
     response.set_cookie(
         key=COOKIE_NAME,
@@ -237,10 +245,23 @@ async def auth_callback(
     # Prefer the in-memory store (single-worker dev), fall back to the cookie
     # so multi-worker / multi-instance deployments still verify state correctly.
     session_id = _oauth_states.pop(state, None)
+    log.info(
+        "[auth/callback] state_query=%s... in_memory_hit=%s cookie_state=%s... ss_session_cookie=%s",
+        state[:8],
+        session_id is not None,
+        (ss_oauth_state or "<none>")[:8],
+        (ss_session or "<none>")[:8],
+    )
     if session_id is None:
         if ss_oauth_state and secrets.compare_digest(ss_oauth_state, state):
             session_id = ss_session or secrets.token_urlsafe(32)
+            log.info("[auth/callback] verified via cookie fallback")
         else:
+            log.warning(
+                "[auth/callback] STATE MISMATCH: query=%s cookie=%s",
+                state,
+                ss_oauth_state,
+            )
             return JSONResponse(
                 {"error": "Invalid OAuth state parameter. Possible CSRF attempt."},
                 status_code=400,
