@@ -36,6 +36,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 _is_dev = os.getenv("ENVIRONMENT", "development") == "development"
+_oauth_states: dict[str, str] = {}
 logging.basicConfig(
     level=logging.DEBUG if _is_dev else logging.WARNING,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -191,12 +192,14 @@ async def auth_login(ss_session: str = Cookie(default=None)):
         include_granted_scopes="true",
         prompt="consent",
     )
+    
+    _oauth_states[state] = session_id 
 
     response = RedirectResponse(auth_url)
 
     # store session_id directly in cookie (this is what fixes Render issue)
     response.set_cookie(
-        key="oauth_session",
+        key=COOKIE_NAME,
         value=session_id,
         httponly=True,
         samesite="lax",
@@ -212,9 +215,14 @@ async def auth_callback(code: str, state: str, request: Request):
     """
     Google redirects here after user consent.
     """
+    
+    if state not in _oauth_states:
+        return JSONResponse(
+            {"error": "Invalid OAuth state parameter. Possible CSRF attempt."},
+            status_code=400,
+        )
 
-    # get session from cookie instead of memory
-    session_id = request.cookies.get("oauth_session")
+    session_id = _oauth_states.pop(state)
 
     if not session_id:
         return JSONResponse(
