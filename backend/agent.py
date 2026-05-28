@@ -1,4 +1,4 @@
-﻿# agent.py â€” 2-step scheduling pipeline (token-optimized)
+# agent.py â€” 2-step scheduling pipeline (token-optimized)
 #
 # Architecture:                                         ~Input tokens
 #   Step 0: _fast_intent()   â€” 0 LLM tokens (set lookup)        0

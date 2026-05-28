@@ -21,8 +21,8 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from google.oauth2.credentials import Credentials
 from pydantic import BaseModel
 
-from agent import run_agent, run_agent_stream
-from calendar_tool import (
+from backend.agent import run_agent, run_agent_stream
+from backend.calendar_tool import (
     SCOPES,
     credentials_from_flow,
     get_availability,
@@ -55,7 +55,7 @@ app = FastAPI(title="Smart Scheduler")
 
 @app.on_event("startup")
 async def _startup() -> None:
-    from calendar_tool import warmup
+    from backend.calendar_tool import warmup
     warmup()
 
 
@@ -390,7 +390,7 @@ async def voice_transcribe(
     audio_bytes = await audio.read()
     filename = audio.filename or "audio.webm"
 
-    from voice import transcribe_audio
+    from backend.voice import transcribe_audio
     t_stt = time.monotonic()
     try:
         text = transcribe_audio(audio_bytes, filename)
@@ -424,7 +424,7 @@ async def voice_synthesize(
     if not creds:
         return JSONResponse({"error": "Not authenticated."}, status_code=401)
 
-    from voice import speak_text_iter
+    from backend.voice import speak_text_iter
 
     # Stream WAV bytes from Orpheus directly to the client without buffering
     # the entire file in the backend.  The frontend parses the 44-byte WAV
