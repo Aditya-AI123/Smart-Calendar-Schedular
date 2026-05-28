@@ -17,7 +17,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Cookie, FastAPI, File, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+ fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from google.oauth2.credentials import Credentials
 from pydantic import BaseModel
 
@@ -37,7 +37,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # ── Logging ────────────────────────────────────────────────────────────────────
 _is_dev = os.getenv("ENVIRONMENT", "development") == "development"
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if _is_dev else logging.WARNING,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -98,11 +98,7 @@ def _load_creds_from_disk(session_id: str) -> Credentials | None:
 _sessions: dict = {}
 
 # Maps OAuth state token -> session_id (prevents CSRF on the callback)
-# NOTE: also persisted in a cookie at /auth/login so multi-worker / multi-instance
-# deployments (e.g. Render) can verify state without shared memory.
 _oauth_states: dict[str, str] = {}
-
-OAUTH_STATE_COOKIE = "ss_oauth_state"
 
 # Per-session freebusy cache: {session_id: {"date:sh:eh": {"result": ..., "expires": float}}}
 # Avoids redundant Google API calls when availability was already checked this session.
@@ -199,14 +195,6 @@ async def auth_login(ss_session: str = Cookie(default=None)):
     )
     _oauth_states[state] = session_id
 
-    log.info(
-        "[auth/login] session_id=%s... state=%s... env=%s secure=%s",
-        session_id[:8],
-        state[:8],
-        os.getenv("ENVIRONMENT", "development"),
-        os.getenv("ENVIRONMENT", "development") == "production",
-    )
-
     response = RedirectResponse(auth_url)
     response.set_cookie(
         key=COOKIE_NAME,
@@ -216,56 +204,22 @@ async def auth_login(ss_session: str = Cookie(default=None)):
         max_age=COOKIE_MAX_AGE,
         secure=os.getenv("ENVIRONMENT", "development") == "production",
     )
-    # Also stash the state in a short-lived cookie so the callback can verify
-    # it without relying on the in-memory _oauth_states dict (which doesn't
-    # survive across workers or dyno restarts on Render).
-    response.set_cookie(
-        key=OAUTH_STATE_COOKIE,
-        value=state,
-        httponly=True,
-        samesite="lax",
-        max_age=600,  # 10 min — OAuth flow should complete well within this
-        secure=os.getenv("ENVIRONMENT", "development") == "production",
-    )
     return response
 
 
 @app.get("/auth/callback")
-async def auth_callback(
-    code: str,
-    state: str,
-    ss_session: str = Cookie(default=None),
-    ss_oauth_state: str = Cookie(default=None),
-):
+async def auth_callback(code: str, state: str):
     """
     Google redirects here after the user grants consent.
     Exchange the code for tokens and bind them to the user's session.
     The token is stored server-side only — never returned to the client.
     """
-    # Prefer the in-memory store (single-worker dev), fall back to the cookie
-    # so multi-worker / multi-instance deployments still verify state correctly.
-    session_id = _oauth_states.pop(state, None)
-    log.info(
-        "[auth/callback] state_query=%s... in_memory_hit=%s cookie_state=%s... ss_session_cookie=%s",
-        state[:8],
-        session_id is not None,
-        (ss_oauth_state or "<none>")[:8],
-        (ss_session or "<none>")[:8],
-    )
-    if session_id is None:
-        if ss_oauth_state and secrets.compare_digest(ss_oauth_state, state):
-            session_id = ss_session or secrets.token_urlsafe(32)
-            log.info("[auth/callback] verified via cookie fallback")
-        else:
-            log.warning(
-                "[auth/callback] STATE MISMATCH: query=%s cookie=%s",
-                state,
-                ss_oauth_state,
-            )
-            return JSONResponse(
-                {"error": "Invalid OAuth state parameter. Possible CSRF attempt."},
-                status_code=400,
-            )
+    if state not in _oauth_states:
+        return JSONResponse(
+            {"error": "Invalid OAuth state parameter. Possible CSRF attempt."},
+            status_code=400,
+        )
+    session_id = _oauth_states.pop(state)
 
     try:
         flow = get_google_flow()
@@ -288,7 +242,6 @@ async def auth_callback(
         max_age=COOKIE_MAX_AGE,
         secure=os.getenv("ENVIRONMENT", "development") == "production",
     )
-    response.delete_cookie(OAUTH_STATE_COOKIE)
     return response
 
 
