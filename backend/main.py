@@ -97,9 +97,6 @@ def _load_creds_from_disk(session_id: str) -> Credentials | None:
 # In production with multiple workers, replace with Redis.
 _sessions: dict = {}
 
-# Maps OAuth state token -> session_id (prevents CSRF on the callback)
-_oauth_states: dict[str, str] = {}
-
 # Per-session freebusy cache: {session_id: {"date:sh:eh": {"result": ..., "expires": float}}}
 # Avoids redundant Google API calls when availability was already checked this session.
 _slot_cache: dict[str, dict] = {}
@@ -188,45 +185,50 @@ async def auth_login(ss_session: str = Cookie(default=None)):
     session_id = ss_session or secrets.token_urlsafe(32)
 
     flow = get_google_flow()
+
     auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
-        prompt="consent",  # always return a refresh_token
+        prompt="consent",
     )
-    _oauth_states[state] = session_id
 
     response = RedirectResponse(auth_url)
+
+    # store session_id directly in cookie (this is what fixes Render issue)
     response.set_cookie(
-        key=COOKIE_NAME,
+        key="oauth_session",
         value=session_id,
-        httponly=True,       # JS cannot read this cookie
+        httponly=True,
         samesite="lax",
         max_age=COOKIE_MAX_AGE,
         secure=os.getenv("ENVIRONMENT", "development") == "production",
     )
+
     return response
 
 
 @app.get("/auth/callback")
-async def auth_callback(code: str, state: str):
+async def auth_callback(code: str, state: str, request: Request):
     """
-    Google redirects here after the user grants consent.
-    Exchange the code for tokens and bind them to the user's session.
-    The token is stored server-side only — never returned to the client.
+    Google redirects here after user consent.
     """
-    if state not in _oauth_states:
+
+    # get session from cookie instead of memory
+    session_id = request.cookies.get("oauth_session")
+
+    if not session_id:
         return JSONResponse(
-            {"error": "Invalid OAuth state parameter. Possible CSRF attempt."},
+            {"error": "Session lost. Please login again."},
             status_code=400,
         )
-    session_id = _oauth_states.pop(state)
 
     try:
         flow = get_google_flow()
         creds = credentials_from_flow(flow, code)
     except Exception as exc:
         return JSONResponse(
-            {"error": f"Token exchange failed: {exc}"}, status_code=500
+            {"error": f"Token exchange failed: {exc}"},
+            status_code=500,
         )
 
     _sessions[session_id] = creds
@@ -243,7 +245,6 @@ async def auth_callback(code: str, state: str):
         secure=os.getenv("ENVIRONMENT", "development") == "production",
     )
     return response
-
 
 @app.get("/auth/status")
 async def auth_status(ss_session: str = Cookie(default=None)):
