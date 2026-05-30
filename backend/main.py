@@ -17,7 +17,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Cookie, FastAPI, File, Request, UploadFile
- fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from google.oauth2.credentials import Credentials
 from pydantic import BaseModel
 
